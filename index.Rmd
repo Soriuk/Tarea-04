@@ -1,0 +1,135 @@
+---
+title: "Orquídeas en Áreas Silvestres Protegidas"
+author: "Ignacio Quirós"
+date: "7/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introducción  
+La presente tarea tiene como objetivo principal la representación por medio de un mapa, la observación de las Áreas Silvestres Protegidas terrestres de Costa Rica y la ubicación de la cantidad de especies de Orquídeas que allí se encuentran.  
+
+## Carga de librerias
+```{r library, message=FALSE, warning=FALSE}
+library(sf)
+library(leaflet)
+library(leaflet.extras)
+library(leafem)
+library(dplyr)
+library(DT)
+library(plotly)
+library(spData)
+library(tidyr)
+```
+
+## Carga de datos
+```{r datos, message=TRUE, warning=FALSE}
+orqui <-
+  st_read(
+    "https://raw.githubusercontent.com/gf0604-procesamientodatosgeograficos/2021i-datos/main/gbif/orchidaceae-cr-registros.csv",
+    options = c(
+      "X_POSSIBLE_NAMES=decimalLongitude",
+      "Y_POSSIBLE_NAMES=decimalLatitude"
+    ),
+    quiet = TRUE
+  )
+
+asp <-
+  st_read(
+    "https://raw.githubusercontent.com/gf0604-procesamientodatosgeograficos/2021i-datos/main/sinac/asp/asp-wgs84.geojson",
+    quiet = TRUE
+  )
+
+st_crs(orqui) = 4326
+st_crs(asp) = 4326
+```  
+
+## Limpieza de datos
+```{r clean, message=FALSE, warning=FALSE, include=TRUE}
+cat("\n Cantidad original de registros: ", nrow(orqui)) 
+
+orqui$species[orqui$species == ""] <- "No"
+
+orqui <-
+  orqui %>%
+  filter(!is.na(coordinateUncertaintyInMeters) &
+           coordinateUncertaintyInMeters <= 1000) %>%
+  filter(species!="No")
+cat(
+  "\n Cantidad de registros después de descartar los de alta incertidumbre en la ubicación: ",
+  nrow(orqui)
+)
+
+asp <- asp %>%
+  filter(descripcio!="Area Marina de Manejo"&descripcio!="Area marina protegida")
+```  
+
+## Carga de registros asp
+```{r registro, message=FALSE, warning=FALSE}
+registros_asp <-
+  asp %>%
+  st_join(orqui) %>%
+  group_by(nombre_asp) %>%
+  summarize(especies = n_distinct(species, na.rm = TRUE))
+
+st_crs(registros_asp) = 4326
+```  
+## Carga de paleta de colores
+```{r pallete, message=FALSE, warning=FALSE}
+colores_especies <-
+  colorNumeric(palette = "RdPu",
+               domain = registros_asp$especies,
+               na.color = "transparent")
+```  
+
+# Mapa!
+```{r map, message=FALSE, warning=FALSE}
+leaflet() %>%
+  addTiles(group = "OSM") %>%
+  addPolygons(
+    data = registros_asp,
+    fillColor = ~ colores_especies(registros_asp$especies),
+    fillOpacity = 0.7,
+    stroke = TRUE,
+    color = "black",
+    weight = 1,
+    popup = paste(
+      paste("<strong>Localidad:</strong>",
+            registros_asp$nombre_asp),
+      paste(
+        "<strong>Cantidad de especies:</strong>",
+        registros_asp$especies
+      ),
+      paste("<strong>Área (km^2):</strong>",
+            asp$area_km),
+      paste("<strong>Descripción:</strong>",
+            asp$descripcio),
+      sep = '<br/>'
+    ),
+    group = "Provincias - especies"
+  ) %>%
+  addCircleMarkers(
+    data = orqui,
+    stroke = F,
+    radius = 2,
+    fillColor = 'black',
+    fillOpacity = 1,
+    popup = paste(orqui$species),
+    clusterOptions = markerClusterOptions(),
+    group = "Registros asp"
+  ) %>%
+  addLayersControl(
+    baseGroups = c("OSM"),
+    overlayGroups = c("Provincias - especies", "Registros asp")
+  ) %>%
+  addLegend(
+    position = "bottomleft",
+    pal = colores_especies,
+    values = registros_asp$especies,
+    group = "Provincias - especies",
+    title = "Cantidad de especies"
+  )
+```
